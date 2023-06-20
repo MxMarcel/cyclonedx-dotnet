@@ -18,22 +18,23 @@
 using System;
 using System.Collections.Generic;
 using System.IO.Abstractions;
-using CycloneDX.Models;
 using System.Linq;
-using CycloneDX.Interfaces;
-using NuGet.Versioning;
 using System.Text.Json;
+using CycloneDX.Interfaces;
+using CycloneDX.Models;
+using NuGet.Versioning;
 
 namespace CycloneDX.Services
 {
-    public class ProjectAssetsFileService : IProjectAssetsFileService 
+    public class ProjectAssetsFileService : IProjectAssetsFileService
     {
         private readonly IFileSystem _fileSystem;
         private readonly IDotnetCommandService _dotnetCommandService;
         private readonly Func<IAssetFileReader> _assetFileReaderFactory;
         private readonly IJsonDocs _assetJsonObject;
 
-        public ProjectAssetsFileService(IFileSystem fileSystem, IDotnetCommandService dotnetCommandService, Func<IAssetFileReader> assetFileReaderFactory, IJsonDocs assetJsonObject)
+        public ProjectAssetsFileService(IFileSystem fileSystem, IDotnetCommandService dotnetCommandService,
+            Func<IAssetFileReader> assetFileReaderFactory, IJsonDocs assetJsonObject)
         {
             _fileSystem = fileSystem;
             _dotnetCommandService = dotnetCommandService;
@@ -41,7 +42,8 @@ namespace CycloneDX.Services
             _assetJsonObject = assetJsonObject;
         }
 
-        public HashSet<NugetPackage> GetNugetPackages(string projectFilePath, string projectAssetsFilePath, bool isTestProject, bool excludeDev)
+        public HashSet<NugetPackage> GetNugetPackages(string projectFilePath, string projectAssetsFilePath,
+            bool isTestProject, bool excludeDev)
         {
             var packages = new HashSet<NugetPackage>();
 
@@ -51,7 +53,8 @@ namespace CycloneDX.Services
                 string jsonContent = assetFileReader.ReadAllText(projectAssetsFilePath);
                 JsonDocument assetFileObject = _assetJsonObject.Parse(jsonContent);
                 // get all direct nuget dependencies of the project
-                JsonElement frameworksProperties = assetFileObject.RootElement.GetProperty("project").GetProperty("frameworks");
+                JsonElement frameworksProperties =
+                    assetFileObject.RootElement.GetProperty("project").GetProperty("frameworks");
 
                 var assetsFile = assetFileReader.Read(projectAssetsFilePath);
 
@@ -66,9 +69,13 @@ namespace CycloneDX.Services
                             Version = library.Version.ToNormalizedString(),
                             Scope = Component.ComponentScope.Required,
                             Dependencies = new Dictionary<string, string>(),
-                            // get value from project.assets.json file ( x."project"."frameworks".<framework>."dependencies".<library.Name>."suppressParent") 
-                            IsDevDependency = SetIsDevDependency(library.Name, targetRuntime.Name, frameworksProperties),
-                            IsDirectReference = SetIsDirectReference(library.Name, targetRuntime.Name, frameworksProperties)
+                            // get value from project.assets.json file ( x."project"."frameworks".<framework>."dependencies".<library.Name>."suppressParent")
+                            IsDevDependency =
+                                SetIsDevDependency(library.Name, targetRuntime.Name, frameworksProperties,
+                                    projectFilePath),
+                            IsDirectReference =
+                                SetIsDirectReference(library.Name, targetRuntime.Name, frameworksProperties,
+                                    projectFilePath)
                         };
 
                         // is this a test project dependency or only a development dependency
@@ -79,11 +86,13 @@ namespace CycloneDX.Services
                         {
                             package.Scope = Component.ComponentScope.Excluded;
                         }
+
                         // include direct dependencies
                         foreach (var dep in library.Dependencies)
                         {
                             package.Dependencies.Add(dep.Id, dep.VersionRange?.ToNormalizedString());
                         }
+
                         runtimePackages.Add(package);
                     }
 
@@ -95,26 +104,54 @@ namespace CycloneDX.Services
 
             return packages;
         }
-        public bool SetIsDirectReference(string packageName, string targetRuntime, JsonElement jsonContent)
+
+        public bool SetIsDirectReference(string packageName, string targetRuntime, JsonElement jsonContent,
+            string projectFilePath)
         {
             string framework = TargetFrameworkToAlias(targetRuntime);
-            JsonElement packageProperties;
-            if (jsonContent.GetProperty(framework).GetProperty("dependencies").TryGetProperty(packageName, out packageProperties))
+
+            try
             {
-                // every direct reference has target property
-                return packageProperties.TryGetProperty("target", out _);
+                if (jsonContent.GetProperty(framework)
+                    .GetProperty("dependencies")
+                    .TryGetProperty(packageName, out var packageProperties))
+                {
+                    // every direct reference has target property
+                    return packageProperties.TryGetProperty("target", out _);
+                }
             }
+            catch
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine(
+                    $"Framework '{framework}' derived from target runtime '{targetRuntime}' was not found in the project '{projectFilePath}' for package '{packageName}', assuming indirect reference");
+            }
+
             return false;
         }
-        public bool SetIsDevDependency(string packageName, string targetRuntime, JsonElement jsonContent)
+
+        public bool SetIsDevDependency(string packageName, string targetRuntime, JsonElement jsonContent,
+            string projectFilePath)
         {
             string framework = TargetFrameworkToAlias(targetRuntime);
-            JsonElement packageProperties;
-            if (jsonContent.GetProperty(framework).GetProperty("dependencies").TryGetProperty(packageName, out packageProperties))
+
+            try
             {
-                // suppressParent: exists only for development dependencies
-                return packageProperties.TryGetProperty("suppressParent", out _);
+                if (jsonContent.GetProperty(framework)
+                    .GetProperty("dependencies")
+                    .TryGetProperty(packageName, out var packageProperties))
+                {
+                    // suppressParent: exists only for development dependencies
+                    return packageProperties.TryGetProperty("suppressParent", out _);
+                }
             }
+            catch
+            {
+                Console.Error.WriteLine(
+                    $"Framework '{framework}' derived from target runtime '{targetRuntime}' was not found in the project '{projectFilePath}' for package '{packageName}', assuming non-dev dependency");
+            }
+
+
             return false;
         }
 
@@ -137,8 +174,10 @@ namespace CycloneDX.Services
                 {
                     return string.Join("", targetParts);
                 }
+
                 return targetParts[0];
             }
+
             return null;
         }
 
@@ -152,10 +191,12 @@ namespace CycloneDX.Services
             {
                 foreach (var dependency in runtimePackage.Dependencies.ToList())
                 {
-                    if (!NuGetVersion.TryParse(dependency.Value, out _) && VersionRange.TryParse(dependency.Value, out VersionRange versionRange))
+                    if (!NuGetVersion.TryParse(dependency.Value, out _) &&
+                        VersionRange.TryParse(dependency.Value, out VersionRange versionRange))
                     {
                         var normalizedDependencyKey = dependency.Key.ToLowerInvariant();
-                        var package = runtimePackagesLookup[normalizedDependencyKey].FirstOrDefault(pkg => versionRange.Satisfies(NuGetVersion.Parse(pkg.Version)));
+                        var package = runtimePackagesLookup[normalizedDependencyKey]
+                            .FirstOrDefault(pkg => versionRange.Satisfies(NuGetVersion.Parse(pkg.Version)));
                         if (package != default)
                         {
                             runtimePackage.Dependencies[dependency.Key] = package.Version;
@@ -163,7 +204,8 @@ namespace CycloneDX.Services
                         else
                         {
                             // This should not happen, since all dependencies are resolved to a specific version.
-                            Console.Error.WriteLine($"Dependency ({dependency.Key}) with version range ({dependency.Value}) did not resolve to a specific version.");
+                            Console.Error.WriteLine(
+                                $"Dependency ({dependency.Key}) with version range ({dependency.Value}) did not resolve to a specific version.");
                         }
                     }
                 }
