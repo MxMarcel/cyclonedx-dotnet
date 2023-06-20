@@ -68,6 +68,9 @@ namespace CycloneDX
         [Option(Description = "Alternative NuGet repository URL to https://<yoururl>/nuget/<yourrepository>/v3/index.json", ShortName = "u", LongName = "url")]
         string baseUrl { get; set; }
 
+        [Option(Description = "Use NuGet protocol version 2", ShortName = "v2", LongName = "nuget-v2")]
+        bool useNuGetV2 { get; set; }
+
         [Option(Description = "Alternative NuGet repository username", ShortName = "us", LongName = "baseUrlUsername")]
         string baseUrlUserName { get; set; }
 
@@ -199,7 +202,7 @@ namespace CycloneDX
                 HttpClient httpClient = new HttpClient(new HttpClientHandler {
                     AllowAutoRedirect = false
                 });
-                
+
                 if (!string.IsNullOrEmpty(githubBearerToken))
                 {
                     githubService = new GithubService(httpClient, githubBearerToken);
@@ -224,7 +227,9 @@ namespace CycloneDX
             var nugetLogger = new NuGet.Common.NullLogger();
             var nugetInput =
                 NugetInputFactory.Create(baseUrl, baseUrlUserName, baseUrlUserPassword, isPasswordClearText);
-            var nugetService = new NugetV3Service(nugetInput, fileSystem, packageCachePathsResult.Result, githubService, nugetLogger, disableHashComputation);
+            INugetService nugetService = useNuGetV2
+                ? new NugetV2Service(nugetInput, fileSystem, packageCachePathsResult.Result, githubService, nugetLogger, disableHashComputation)
+                : new NugetV3Service(nugetInput, fileSystem, packageCachePathsResult.Result, githubService, nugetLogger, disableHashComputation);
 
             var packages = new HashSet<NugetPackage>();
 
